@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SmartCli.App/SmartCli.App.csproj" />
+    <Project Path="src/SmartCli.Core/SmartCli.Core.csproj" />
+  </Folder>
+</Solution>
