@@ -1,5 +1,6 @@
 using System.ClientModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,14 +15,10 @@ var token = config["GitHubModels:Token"]
 
 var services = new ServiceCollection();
 
-// 1. Console logging is the APP's responsibility — not the library's. The library only
-//    emits log events; here we decide they should show up as single-line console output.
 services.AddLogging(b => b
     .AddSimpleConsole(o => o.SingleLine = true)
     .SetMinimumLevel(LogLevel.Information));
 
-// 2. Register the model provider. Swap this block for OpenAI, Azure, or Ollama and nothing
-//    in the library changes — it depends only on IChatClient.
 services.AddSingleton<IChatClient>(_ =>
     new OpenAI.Chat.ChatClient(
             "openai/gpt-4o-mini",
@@ -29,15 +26,16 @@ services.AddSingleton<IChatClient>(_ =>
             new OpenAIClientOptions { Endpoint = new Uri("https://models.github.ai/inference") })
         .AsIChatClient());
 
-// 3. Register the agent — built-in tools plus one custom tool of our own.
 services.AddSmartCli(builder => builder
     .AddBuiltInTools()
-    .AddTool(Percentage));
+    .AddTool(Percentage)
+    .WithCaching());
 
 using var provider = services.BuildServiceProvider();
 var agent = provider.GetRequiredService<ISmartCliAgent>();
 
-Console.WriteLine("Smart CLI Assistant — ask me something (type 'exit' to quit).\n");
+Console.WriteLine("Smart CLI Assistant — ask me something (type 'exit' to quit, '/reset' to clear history).");
+Console.WriteLine("To see caching work: ask something, type /reset, then ask the EXACT same thing again.\n");
 
 while (true)
 {
@@ -49,17 +47,31 @@ while (true)
     if (string.IsNullOrWhiteSpace(input)) continue;
     if (input.Trim().Equals("exit", StringComparison.OrdinalIgnoreCase)) break;
 
+    if (input.Trim().Equals("/reset", StringComparison.OrdinalIgnoreCase))
+    {
+        agent.Reset();
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine("(conversation reset — history is back to just the system prompt)\n");
+        Console.ResetColor();
+        continue;
+    }
+
     Console.ForegroundColor = ConsoleColor.Green;
     Console.Write("ai  › ");
     Console.ResetColor();
 
+    var stopwatch = Stopwatch.StartNew();
     await foreach (var chunk in agent.AskStreamingAsync(input))
         Console.Write(chunk);
-    Console.WriteLine("\n");
+    stopwatch.Stop();
+
+    Console.ForegroundColor = ConsoleColor.DarkGray;
+    Console.WriteLine($"\n  ({stopwatch.ElapsedMilliseconds} ms)");
+    Console.ResetColor();
+    Console.WriteLine();
 }
 
-// A custom tool defined right in the app — this is how any consumer extends the library
-// with domain logic the library never knew about.
+// A custom tool defined right in the app — a tool the library never heard of.
 [Description("Calculates X percent of a number, for any general percentage question.")]
 static string Percentage(
     [Description("The base value")] double value,
